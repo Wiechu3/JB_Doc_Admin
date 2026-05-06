@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import type { Expense, ExpenseStatus, User } from "@/lib/types";
+import type { Expense, ExpenseStatus, OnboardingDocument, User } from "@/lib/types";
 
 export const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
@@ -9,6 +9,7 @@ const dataDir = path.join(/* turbopackIgnore: true */ process.cwd(), "data");
 const storageDir = path.join(/* turbopackIgnore: true */ process.cwd(), "storage", "documents");
 const usersPath = path.join(dataDir, "users.json");
 const expensesPath = path.join(dataDir, "expenses.json");
+const onboardingDocumentsPath = path.join(dataDir, "onboardingDocuments.json");
 
 const adminUser: User = {
   id: "admin",
@@ -35,6 +36,12 @@ async function ensureBaseFiles() {
     await fs.access(expensesPath);
   } catch {
     await fs.writeFile(expensesPath, JSON.stringify([], null, 2));
+  }
+
+  try {
+    await fs.access(onboardingDocumentsPath);
+  } catch {
+    await fs.writeFile(onboardingDocumentsPath, JSON.stringify([], null, 2));
   }
 }
 
@@ -78,6 +85,14 @@ export async function saveExpenses(expenses: Expense[]) {
   await writeJson(expensesPath, expenses);
 }
 
+export async function getOnboardingDocuments() {
+  return readJson<OnboardingDocument[]>(onboardingDocumentsPath, []);
+}
+
+export async function saveOnboardingDocuments(documents: OnboardingDocument[]) {
+  await writeJson(onboardingDocumentsPath, documents);
+}
+
 export function slugifyFolderName(name: string) {
   return name
     .normalize("NFD")
@@ -105,6 +120,10 @@ export async function uniqueFolderName(baseName: string) {
 
 export async function ensureBeneficiaryFolders(folderName: string) {
   await fs.mkdir(path.join(storageDir, folderName, "wydatki"), { recursive: true });
+}
+
+export async function ensureOnboardingFolder(folderName: string) {
+  await fs.mkdir(path.join(storageDir, folderName, "onboarding"), { recursive: true });
 }
 
 export async function findBeneficiary(id: string) {
@@ -136,7 +155,19 @@ export function assertValidUpload(file: File | null) {
   }
 }
 
-export function safeStoredFileName(kind: "expense", originalFileName: string) {
+export function assertOptionalValidUpload(file: File | null) {
+  if (!file || file.size === 0) {
+    return false;
+  }
+
+  if (file.size > MAX_FILE_SIZE) {
+    throw new Error("Plik nie moze przekraczac 25 MB.");
+  }
+
+  return true;
+}
+
+export function safeStoredFileName(kind: "expense" | "invoice" | "additional" | "onboarding", originalFileName: string, sharedId?: string) {
   const extension = path.extname(originalFileName);
   const base = path
     .basename(originalFileName, extension)
@@ -147,18 +178,23 @@ export function safeStoredFileName(kind: "expense", originalFileName: string) {
     .replace(/^_+|_+$/g, "")
     .slice(0, 60) || "plik";
   const date = new Date().toISOString().slice(0, 10);
-  return `${date}_${kind}_${randomUUID().slice(0, 8)}_${base}${extension.toLowerCase()}`;
+  return `${date}_${kind}_${sharedId ?? randomUUID().slice(0, 8)}_${base}${extension.toLowerCase()}`;
 }
 
-export async function storeExpenseFile(beneficiary: User, file: File) {
+async function storeBeneficiaryFile(beneficiary: User, subfolder: "wydatki" | "onboarding", kind: "invoice" | "additional" | "onboarding", file: File, sharedId?: string) {
   if (!beneficiary.folderName) {
     throw new Error("Beneficjent nie ma folderu dokumentow.");
   }
 
-  await ensureBeneficiaryFolders(beneficiary.folderName);
-  const storedFileName = safeStoredFileName("expense", file.name);
-  const relativePath = path.join("storage", "documents", beneficiary.folderName, "wydatki", storedFileName);
-  const absolutePath = path.join(storageDir, beneficiary.folderName, "wydatki", storedFileName);
+  if (subfolder === "onboarding") {
+    await ensureOnboardingFolder(beneficiary.folderName);
+  } else {
+    await ensureBeneficiaryFolders(beneficiary.folderName);
+  }
+
+  const storedFileName = safeStoredFileName(kind, file.name, sharedId);
+  const relativePath = path.join("storage", "documents", beneficiary.folderName, subfolder, storedFileName);
+  const absolutePath = path.join(storageDir, beneficiary.folderName, subfolder, storedFileName);
   const buffer = Buffer.from(await file.arrayBuffer());
   await fs.writeFile(absolutePath, buffer);
 
@@ -169,6 +205,14 @@ export async function storeExpenseFile(beneficiary: User, file: File) {
     mimeType: file.type || "application/octet-stream",
     fileSize: file.size
   };
+}
+
+export async function storeExpenseFile(beneficiary: User, file: File, kind: "invoice" | "additional", sharedId: string) {
+  return storeBeneficiaryFile(beneficiary, "wydatki", kind, file, sharedId);
+}
+
+export async function storeOnboardingFile(beneficiary: User, file: File) {
+  return storeBeneficiaryFile(beneficiary, "onboarding", "onboarding", file);
 }
 
 export async function readStoredFile(relativePath: string) {

@@ -1,0 +1,42 @@
+[
+  {
+    "id": "admin",
+    "name": "ADMIN",
+    "role": "ADMIN",
+    "description": "",
+    "folderName": null,
+    "isActive": true,
+    "createdAt": "2026-05-06T19:04:06.424Z",
+    "updatedAt": "2026-05-06T19:04:06.425Z"
+  },
+  {
+    "id": "02b3a41a-611b-4c9b-ae29-effab861df15",
+    "name": "Julia B.",
+    "role": "BENEFICIARY",
+    "description": "",
+    "folderName": "julia_b",
+    "isActive": true,
+    "createdAt": "2026-05-06T19:08:12.710Z",
+    "updatedAt": "2026-05-06T19:08:12.710Z"
+  },
+  {
+    "id": "4b723142-0efa-40e6-95d1-4813f8b5f26e",
+    "name": "Dominik W.",
+    "role": "BENEFICIARY",
+    "description": "",
+    "folderName": "dominik_w",
+    "isActive": true,
+    "createdAt": "2026-05-06T19:10:30.800Z",
+    "updatedAt": "2026-05-06T19:10:30.800Z"
+  },
+  {
+    "id": "6397acd4-19e2-41bb-9fa9-3094dc0d7475",
+    "name": "MVP2 Beneficjent Sp. z o.o.",
+    "role": "BENEFICIARY",
+    "description": "Test MVP2",
+    "folderName": "mvp2_beneficjent_sp_z_oo",
+    "isActive": true,
+    "createdAt": "2026-05-06T19:26:39.877Z",
+    "updatedAt": "2026-05-06T19:26:39.877Z"
+  }
+]
