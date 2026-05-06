@@ -71,6 +71,7 @@ export function DocHelperApp() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isExpenseFormOpen, setIsExpenseFormOpen] = useState(false);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
 
   const currentUser = users.find((user) => user.id === selectedUserId);
@@ -222,6 +223,7 @@ export function DocHelperApp() {
       const response = await fetch("/api/expenses", { method: "POST", body: formData });
       await parseResponse<Expense>(response);
       form.reset();
+      setIsExpenseFormOpen(false);
       showNotice("Wydatek został zapisany.");
       await refreshData();
     } catch (caughtError) {
@@ -294,9 +296,9 @@ export function DocHelperApp() {
   }
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(180deg,#fff7ed_0,#f8fafc_260px)]">
-      <header className="border-b border-orange-100 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+    <main className="min-h-screen w-full max-w-full overflow-x-hidden bg-[linear-gradient(180deg,#fff7ed_0,#f8fafc_260px)]">
+      <header className="w-full max-w-full border-b border-orange-100 bg-white/90 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-7xl min-w-0 flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-orange-600 text-white shadow-soft">
               <FileText size={23} />
@@ -306,7 +308,7 @@ export function DocHelperApp() {
               <p className="text-sm text-slate-500">Lokalna obsługa beneficjentów, wydatków i onboardingu</p>
             </div>
           </div>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center">
             <nav className="flex flex-wrap gap-2">
               <TabButton active={activeTab === "expenses"} onClick={() => setActiveTab("expenses")}>WYDATKI</TabButton>
               <TabButton active={activeTab === "onboarding"} onClick={() => setActiveTab("onboarding")}>DOKUMENTY ONBOARDING</TabButton>
@@ -322,7 +324,7 @@ export function DocHelperApp() {
         </div>
       </header>
 
-      <section className="mx-auto max-w-7xl px-4 py-6">
+      <section className="mx-auto w-full max-w-7xl min-w-0 px-4 py-6">
         <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-orange-700">{isAdmin ? "Panel funduszu" : "Panel beneficjenta"}</p>
@@ -375,7 +377,13 @@ export function DocHelperApp() {
             onStatusFilterChange={setAdminStatusFilter}
           />
         ) : (
-          <BeneficiaryExpensesView currentUser={currentUser} expenses={visibleExpenses} onAddExpense={handleAddExpense} />
+          <BeneficiaryExpensesView
+            currentUser={currentUser}
+            expenses={visibleExpenses}
+            isFormOpen={isExpenseFormOpen}
+            onAddExpense={handleAddExpense}
+            onFormOpenChange={setIsExpenseFormOpen}
+          />
         )}
       </section>
     </main>
@@ -392,7 +400,7 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
 
 function SettingsView({ beneficiaries, onAddBeneficiary }: { beneficiaries: User[]; onAddBeneficiary: (event: FormEvent<HTMLFormElement>) => void }) {
   return (
-    <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
+    <div className="grid w-full min-w-0 gap-5 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
       <form className="rounded-lg border border-slate-200 bg-white p-5 shadow-soft" onSubmit={onAddBeneficiary}>
         <h3 className="text-lg font-bold text-slate-950">Dodaj beneficjenta</h3>
         <div className="mt-4 space-y-4">
@@ -428,44 +436,81 @@ function SettingsView({ beneficiaries, onAddBeneficiary }: { beneficiaries: User
   );
 }
 
-function BeneficiaryExpensesView({ currentUser, expenses, onAddExpense }: { currentUser: User | undefined; expenses: Expense[]; onAddExpense: (event: FormEvent<HTMLFormElement>) => void }) {
+function BeneficiaryExpensesView({
+  currentUser,
+  expenses,
+  isFormOpen,
+  onAddExpense,
+  onFormOpenChange
+}: {
+  currentUser: User | undefined;
+  expenses: Expense[];
+  isFormOpen: boolean;
+  onAddExpense: (event: FormEvent<HTMLFormElement>) => void;
+  onFormOpenChange: (value: boolean) => void;
+}) {
   if (!currentUser) return <EmptyState text="Brak wybranego użytkownika." />;
 
   return (
-    <div className="grid gap-5 2xl:grid-cols-[460px_1fr]">
-      <form className="rounded-lg border border-slate-200 bg-white p-5 shadow-soft" onSubmit={onAddExpense}>
-        <h3 className="text-lg font-bold text-slate-950">Dodaj wydatek</h3>
-        <div className="mt-4 space-y-4">
-          <Field label="Data wydatku" name="expenseDate" required type="date" />
-          <Field label="Nazwa wydatku" name="name" required />
-          <Field label="Opis" name="description" textarea />
-          <div className="grid gap-4 sm:grid-cols-2">
+    <div className="w-full min-w-0 space-y-5">
+      <div className="flex justify-end">
+        <button
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-orange-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-orange-700"
+          onClick={() => onFormOpenChange(!isFormOpen)}
+          type="button"
+        >
+          <Plus size={18} />
+          {isFormOpen ? "Ukryj formularz" : "Dodaj wydatek"}
+        </button>
+      </div>
+
+      {isFormOpen ? (
+        <form className="w-full rounded-lg border border-slate-200 bg-white p-5 shadow-soft" onSubmit={onAddExpense}>
+          <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="text-lg font-bold text-slate-950">Dodaj wydatek</h3>
+            <button
+              className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              onClick={() => onFormOpenChange(false)}
+              type="button"
+            >
+              Anuluj
+            </button>
+          </div>
+          <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-2">
+            <Field label="Data wydatku" name="expenseDate" required type="date" />
+            <Field label="Nazwa wydatku" name="name" required />
             <Field label="Kwota zakupu" name="purchaseAmount" required type="number" step="0.01" min="0.01" />
             <Field label="Kwota do zwrotu" name="refundAmount" required type="number" step="0.01" min="0.01" />
-          </div>
-          <Field label="Nazwa kontrahenta" name="contractorName" required />
-          <Field label="NIP kontrahenta" name="contractorNip" required />
-          <label className="block">
-            <span className="mb-1 block text-sm font-semibold text-slate-700">Cel</span>
-            <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4" name="purpose" required defaultValue="">
-              <option value="" disabled>Wybierz cel</option>
-              <option value="PRIORITY">Priorytetowy</option>
-              <option value="DETAILED">Szczegółowy</option>
-            </select>
-          </label>
-          <div className="rounded-lg border border-orange-100 bg-orange-50/60 p-4">
-            <h4 className="text-sm font-bold text-slate-900">Załączniki</h4>
-            <div className="mt-3 space-y-3">
-              <FileField label="Faktura" name="invoice" required />
-              <FileField label="Pozostałe dokumenty" name="additional" />
+            <Field label="Nazwa kontrahenta" name="contractorName" required />
+            <Field label="NIP kontrahenta" name="contractorNip" required />
+            <label className="block min-w-0">
+              <span className="mb-1 block text-sm font-semibold text-slate-700">Cel</span>
+              <select className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4" name="purpose" required defaultValue="">
+                <option value="" disabled>Wybierz cel</option>
+                <option value="PRIORITY">Priorytetowy</option>
+                <option value="DETAILED">Szczegółowy</option>
+              </select>
+            </label>
+            <div className="min-w-0 lg:col-span-2">
+              <Field label="Opis" name="description" textarea />
+            </div>
+            <div className="min-w-0 rounded-lg border border-orange-100 bg-orange-50/60 p-4 lg:col-span-2">
+              <h4 className="text-sm font-bold text-slate-900">Załączniki</h4>
+              <div className="mt-3 grid min-w-0 gap-4 md:grid-cols-2">
+                <FileField label="Faktura" name="invoice" required />
+                <FileField label="Pozostałe dokumenty" name="additional" />
+              </div>
+            </div>
+            <div className="lg:col-span-2">
+              <button className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-orange-600 px-4 py-3 font-bold text-white transition hover:bg-orange-700 sm:w-auto" type="submit">
+                <Plus size={18} />
+                Zapisz wydatek
+              </button>
             </div>
           </div>
-          <button className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-orange-600 px-4 py-3 font-bold text-white transition hover:bg-orange-700" type="submit">
-            <Plus size={18} />
-            Zapisz wydatek
-          </button>
-        </div>
-      </form>
+        </form>
+      ) : null}
+
       <ExpensesTable beneficiaryMode expenses={expenses} users={[currentUser]} />
     </div>
   );
@@ -511,9 +556,9 @@ function AdminExpensesView({
   const title = selectedBeneficiaryId === "all" ? "Wydatki: wszyscy beneficjenci" : `Wydatki: ${beneficiaries.find((beneficiary) => beneficiary.id === selectedBeneficiaryId)?.name ?? "beneficjent"}`;
 
   return (
-    <div className="space-y-5">
+    <div className="w-full min-w-0 space-y-5">
       <Panel title="Filtry wydatków">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-5">
           <SelectField label="Beneficjent" value={selectedBeneficiaryId} onChange={onBeneficiaryChange}>
             <option value="all">WSZYSCY</option>
             {beneficiaries.map((beneficiary) => <option key={beneficiary.id} value={beneficiary.id}>{beneficiary.name}</option>)}
@@ -686,8 +731,8 @@ function OnboardingView({
   ];
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap gap-2">
+    <div className="w-full min-w-0 space-y-5">
+      <div className="flex min-w-0 flex-wrap gap-2">
         {sections.map((item) => <TabButton key={item.id} active={section === item.id} onClick={() => onSectionChange(item.id)}>{item.label}</TabButton>)}
       </div>
 
@@ -720,7 +765,7 @@ function OnboardingView({
       ) : null}
 
       {section === "documents" ? (
-        <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
+        <div className="grid w-full min-w-0 gap-5 xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
           <Panel title="Formularz onboardingowy">
             <a className="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-orange-700" href="/api/onboarding/placeholder">
               <Download size={16} />
@@ -800,21 +845,21 @@ function DownloadCell({ href, label, fileName, fileSize }: { href: string; label
   if (!fileName) return <span className="text-slate-500">Brak danych</span>;
 
   return (
-    <div>
+    <div className="min-w-0">
       <a className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50" href={href}>
         <Download size={14} />
         {label}
       </a>
-      <div className="mt-1 max-w-48 text-xs text-slate-400">{fileName}{fileSize ? ` · ${fileSizeLabel(fileSize)}` : ""}</div>
+      <div className="mt-1 max-w-48 truncate text-xs text-slate-400">{fileName}{fileSize ? ` · ${fileSizeLabel(fileSize)}` : ""}</div>
     </div>
   );
 }
 
 function SelectField({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: React.ReactNode }) {
   return (
-    <label className="block">
+    <label className="block min-w-0">
       <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
-      <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4" value={value} onChange={(event) => onChange(event.target.value)}>
+      <select className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4" value={value} onChange={(event) => onChange(event.target.value)}>
         {children}
       </select>
     </label>
@@ -842,9 +887,9 @@ function Field({
   value?: string;
   onValueChange?: (value: string) => void;
 }) {
-  const commonClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4";
+  const commonClass = "w-full min-w-0 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4";
   return (
-    <label className="block">
+    <label className="block min-w-0">
       <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
       {textarea ? (
         <textarea className={`min-h-24 ${commonClass}`} name={name} required={required} />
@@ -857,24 +902,24 @@ function Field({
 
 function FileField({ label, name, required }: { label: string; name: string; required?: boolean }) {
   return (
-    <label className="block">
+    <label className="block min-w-0">
       <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
-      <input className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" name={name} required={required} type="file" />
+      <input className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" name={name} required={required} type="file" />
     </label>
   );
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-soft">
+    <div className="w-full min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-soft">
       <h3 className="text-lg font-bold text-slate-950">{title}</h3>
-      <div className="mt-4">{children}</div>
+      <div className="mt-4 min-w-0">{children}</div>
     </div>
   );
 }
 
 function TableShell({ children, empty }: { children: React.ReactNode; empty: string }) {
-  return <div className="overflow-x-auto rounded-lg border border-slate-200">{empty ? <div className="bg-slate-50 p-6 text-sm text-slate-500">{empty}</div> : children}</div>;
+  return <div className="w-full max-w-full overflow-x-auto rounded-lg border border-slate-200">{empty ? <div className="bg-slate-50 p-6 text-sm text-slate-500">{empty}</div> : children}</div>;
 }
 
 function EmptyState({ text }: { text: string }) {
