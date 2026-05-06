@@ -1,0 +1,34 @@
+{
+  "name": "dochelper",
+  "version": "1.0.0",
+  "description": "Document management application for beneficiaries",
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:seed": "node -r ts-node/register prisma/seed.ts",
+    "db:init": "prisma migrate dev && npm run prisma:seed"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.5.0",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.5",
+    "next": "^16.2.5",
+    "postcss": "^8.5.14",
+    "prisma": "^5.22.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "tailwindcss": "^4.2.4",
+    "typescript": "^6.0.3"
+  }
+}
