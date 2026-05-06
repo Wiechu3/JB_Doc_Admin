@@ -1,36 +1,49 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Download, FileText, MessageSquare, Plus, RefreshCw, X } from "lucide-react";
-import type { ApiError, Expense, User } from "@/lib/types";
+import { Check, Download, FileText, MessageSquare, Plus, RefreshCw, Send, X } from "lucide-react";
+import type { ApiError, Expense, ExpensePurpose, ExpenseStatus, OnboardingDocument, User } from "@/lib/types";
 
 type Tab = "expenses" | "onboarding" | "settings";
+type OnboardingSection = "welcome" | "marketing" | "contact" | "documents";
 
-const currencyFormatter = new Intl.NumberFormat("pl-PL", {
-  style: "currency",
-  currency: "PLN"
-});
+const currencyFormatter = new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN" });
+const dateTimeFormatter = new Intl.DateTimeFormat("pl-PL", { dateStyle: "short", timeStyle: "short" });
+const dateFormatter = new Intl.DateTimeFormat("pl-PL", { dateStyle: "short" });
 
-const dateFormatter = new Intl.DateTimeFormat("pl-PL", {
-  dateStyle: "short",
-  timeStyle: "short"
-});
-
-function statusClass(status: Expense["status"]) {
-  if (status === "ZAAKCEPTOWANO") {
-    return "bg-emerald-100 text-emerald-700 ring-emerald-200";
-  }
-  if (status === "ODRZUCONO") {
-    return "bg-red-100 text-red-700 ring-red-200";
-  }
+function statusClass(status: ExpenseStatus) {
+  if (status === "ZAAKCEPTOWANO") return "bg-emerald-100 text-emerald-700 ring-emerald-200";
+  if (status === "ODRZUCONO") return "bg-red-100 text-red-700 ring-red-200";
   return "bg-slate-100 text-slate-700 ring-slate-200";
 }
 
-function fileSizeLabel(size: number) {
-  if (size >= 1024 * 1024) {
-    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-  }
+function purposeLabel(purpose?: ExpensePurpose) {
+  if (purpose === "PRIORITY") return "Priorytetowy";
+  if (purpose === "DETAILED") return "Szczegółowy";
+  return "Brak danych";
+}
+
+function fileSizeLabel(size?: number) {
+  if (!size) return "";
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
+function displayValue(value?: string | null) {
+  return value?.trim() ? value : "Brak danych";
+}
+
+function displayExpenseDate(value?: string) {
+  if (!value) return "Brak danych";
+  return dateFormatter.format(new Date(`${value}T00:00:00`));
+}
+
+function invoiceName(expense: Expense) {
+  return expense.invoiceOriginalFileName ?? expense.originalFileName;
+}
+
+function invoiceSize(expense: Expense) {
+  return expense.invoiceFileSize ?? expense.fileSize;
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -45,8 +58,15 @@ async function parseResponse<T>(response: Response): Promise<T> {
 export function DocHelperApp() {
   const [users, setUsers] = useState<User[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [onboardingDocuments, setOnboardingDocuments] = useState<OnboardingDocument[]>([]);
   const [selectedUserId, setSelectedUserId] = useState("admin");
-  const [adminBeneficiaryId, setAdminBeneficiaryId] = useState("");
+  const [adminBeneficiaryId, setAdminBeneficiaryId] = useState("all");
+  const [adminStatusFilter, setAdminStatusFilter] = useState<"all" | ExpenseStatus>("all");
+  const [adminPurposeFilter, setAdminPurposeFilter] = useState<"all" | ExpensePurpose>("all");
+  const [adminDateFrom, setAdminDateFrom] = useState("");
+  const [adminDateTo, setAdminDateTo] = useState("");
+  const [onboardingSection, setOnboardingSection] = useState<OnboardingSection>("welcome");
+  const [onboardingBeneficiaryFilter, setOnboardingBeneficiaryFilter] = useState("all");
   const [activeTab, setActiveTab] = useState<Tab>("expenses");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -59,28 +79,50 @@ export function DocHelperApp() {
   const activeUsers = users.filter((user) => user.role === "ADMIN" || user.isActive);
 
   const visibleExpenses = useMemo(() => {
-    if (isAdmin) {
-      return adminBeneficiaryId ? expenses.filter((expense) => expense.beneficiaryId === adminBeneficiaryId) : [];
+    if (!isAdmin) {
+      return currentUser ? expenses.filter((expense) => expense.beneficiaryId === currentUser.id) : [];
     }
-    return currentUser ? expenses.filter((expense) => expense.beneficiaryId === currentUser.id) : [];
-  }, [adminBeneficiaryId, currentUser, expenses, isAdmin]);
+
+    return expenses.filter((expense) => {
+      if (adminBeneficiaryId !== "all" && expense.beneficiaryId !== adminBeneficiaryId) return false;
+      if (adminStatusFilter !== "all" && expense.status !== adminStatusFilter) return false;
+      if (adminPurposeFilter !== "all" && expense.purpose !== adminPurposeFilter) return false;
+      if (adminDateFrom && (!expense.expenseDate || expense.expenseDate < adminDateFrom)) return false;
+      if (adminDateTo && (!expense.expenseDate || expense.expenseDate > adminDateTo)) return false;
+      return true;
+    });
+  }, [adminBeneficiaryId, adminDateFrom, adminDateTo, adminPurposeFilter, adminStatusFilter, currentUser, expenses, isAdmin]);
+
+  const visibleOnboardingDocuments = useMemo(() => {
+    if (!isAdmin) {
+      return currentUser ? onboardingDocuments.filter((document) => document.beneficiaryId === currentUser.id) : [];
+    }
+
+    return onboardingBeneficiaryFilter === "all"
+      ? onboardingDocuments
+      : onboardingDocuments.filter((document) => document.beneficiaryId === onboardingBeneficiaryFilter);
+  }, [currentUser, isAdmin, onboardingBeneficiaryFilter, onboardingDocuments]);
 
   const refreshData = useCallback(async () => {
     setIsLoading(true);
     setError("");
     try {
-      const [usersResponse, expensesResponse] = await Promise.all([fetch("/api/users"), fetch("/api/expenses")]);
-      const [nextUsers, nextExpenses] = await Promise.all([
-        parseResponse<User[]>(usersResponse),
-        parseResponse<Expense[]>(expensesResponse)
+      const [usersResponse, expensesResponse, onboardingResponse] = await Promise.all([
+        fetch("/api/users"),
+        fetch("/api/expenses"),
+        fetch("/api/onboarding")
       ]);
+      const [nextUsers, nextExpenses, nextOnboardingDocuments] = await Promise.all([
+        parseResponse<User[]>(usersResponse),
+        parseResponse<Expense[]>(expensesResponse),
+        parseResponse<OnboardingDocument[]>(onboardingResponse)
+      ]);
+
       setUsers(nextUsers);
       setExpenses(nextExpenses);
+      setOnboardingDocuments(nextOnboardingDocuments);
       setSelectedUserId((previousUserId) =>
         nextUsers.some((user) => user.id === previousUserId && (user.role === "ADMIN" || user.isActive)) ? previousUserId : "admin"
-      );
-      setAdminBeneficiaryId((previousBeneficiaryId) =>
-        previousBeneficiaryId || nextUsers.find((user) => user.role === "BENEFICIARY")?.id || ""
       );
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Nie udało się odświeżyć danych.");
@@ -94,9 +136,7 @@ export function DocHelperApp() {
   }, [refreshData]);
 
   useEffect(() => {
-    if (!isAdmin && activeTab === "settings") {
-      setActiveTab("expenses");
-    }
+    if (!isAdmin && activeTab === "settings") setActiveTab("expenses");
   }, [activeTab, isAdmin]);
 
   function showNotice(message: string) {
@@ -124,16 +164,12 @@ export function DocHelperApp() {
       const response = await fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          description: String(formData.get("description") ?? "").trim()
-        })
+        body: JSON.stringify({ name, description: String(formData.get("description") ?? "").trim() })
       });
-      const user = await parseResponse<User>(response);
+      await parseResponse<User>(response);
       form.reset();
       showNotice("Beneficjent został dodany, a folder wydatków utworzony.");
       await refreshData();
-      setAdminBeneficiaryId(user.id);
     } catch (caughtError) {
       showError(caughtError instanceof Error ? caughtError.message : "Nie udało się dodać beneficjenta.");
     }
@@ -148,35 +184,42 @@ export function DocHelperApp() {
 
     const form = event.currentTarget;
     const formData = new FormData(form);
-    const file = formData.get("file") as File | null;
-    const name = String(formData.get("name") ?? "").trim();
+    const invoice = formData.get("invoice") as File | null;
+    const additional = formData.get("additional") as File | null;
+    const requiredFields = [
+      ["expenseDate", "Data wydatku jest wymagana."],
+      ["name", "Nazwa wydatku jest wymagana."],
+      ["contractorName", "Nazwa kontrahenta jest wymagana."],
+      ["contractorNip", "NIP kontrahenta jest wymagany."],
+      ["purpose", "Cel wydatku jest wymagany."]
+    ] as const;
+
+    for (const [field, message] of requiredFields) {
+      if (!String(formData.get(field) ?? "").trim()) {
+        showError(message);
+        return;
+      }
+    }
+
     const purchaseAmount = Number(String(formData.get("purchaseAmount") ?? "").replace(",", "."));
     const refundAmount = Number(String(formData.get("refundAmount") ?? "").replace(",", "."));
-
-    if (!file || file.size === 0) {
-      showError("Plik jest wymagany.");
-      return;
-    }
-    if (file.size > 25 * 1024 * 1024) {
-      showError("Plik nie może przekraczać 25 MB.");
-      return;
-    }
-    if (!name) {
-      showError("Nazwa wydatku jest wymagana.");
-      return;
-    }
     if (!purchaseAmount || purchaseAmount <= 0 || !refundAmount || refundAmount <= 0) {
       showError("Kwoty muszą być większe od zera.");
+      return;
+    }
+    if (!invoice || invoice.size === 0) {
+      showError("Faktura jest wymagana.");
+      return;
+    }
+    if (invoice.size > 25 * 1024 * 1024 || (additional && additional.size > 25 * 1024 * 1024)) {
+      showError("Pojedynczy plik nie może przekraczać 25 MB.");
       return;
     }
 
     formData.set("beneficiaryId", currentUser.id);
 
     try {
-      const response = await fetch("/api/expenses", {
-        method: "POST",
-        body: formData
-      });
+      const response = await fetch("/api/expenses", { method: "POST", body: formData });
       await parseResponse<Expense>(response);
       form.reset();
       showNotice("Wydatek został zapisany.");
@@ -212,7 +255,43 @@ export function DocHelperApp() {
     }
   }
 
-  const selectedAdminBeneficiary = beneficiaries.find((user) => user.id === adminBeneficiaryId);
+  async function handleUploadOnboarding(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!currentUser || currentUser.role !== "BENEFICIARY") {
+      showError("Dokument może wysłać wybrany beneficjent.");
+      return;
+    }
+
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const name = String(formData.get("name") ?? "").trim();
+    const file = formData.get("file") as File | null;
+
+    if (!name) {
+      showError("Nazwa dokumentu jest wymagana.");
+      return;
+    }
+    if (!file || file.size === 0) {
+      showError("Plik jest wymagany.");
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      showError("Plik nie może przekraczać 25 MB.");
+      return;
+    }
+
+    formData.set("beneficiaryId", currentUser.id);
+
+    try {
+      const response = await fetch("/api/onboarding", { method: "POST", body: formData });
+      await parseResponse<OnboardingDocument>(response);
+      form.reset();
+      showNotice("Dokument onboardingowy został wysłany.");
+      await refreshData();
+    } catch (caughtError) {
+      showError(caughtError instanceof Error ? caughtError.message : "Nie udało się wysłać dokumentu.");
+    }
+  }
 
   return (
     <main className="min-h-screen bg-[linear-gradient(180deg,#fff7ed_0,#f8fafc_260px)]">
@@ -224,35 +303,19 @@ export function DocHelperApp() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-slate-950">DocHelper</h1>
-              <p className="text-sm text-slate-500">Lokalna obsługa beneficjentów i wydatków</p>
+              <p className="text-sm text-slate-500">Lokalna obsługa beneficjentów, wydatków i onboardingu</p>
             </div>
           </div>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <nav className="flex flex-wrap gap-2">
-              <TabButton active={activeTab === "expenses"} onClick={() => setActiveTab("expenses")}>
-                WYDATKI
-              </TabButton>
-              <TabButton active={activeTab === "onboarding"} onClick={() => setActiveTab("onboarding")}>
-                DOKUMENTY ONBOARDING
-              </TabButton>
-              {isAdmin ? (
-                <TabButton active={activeTab === "settings"} onClick={() => setActiveTab("settings")}>
-                  USTAWIENIA
-                </TabButton>
-              ) : null}
+              <TabButton active={activeTab === "expenses"} onClick={() => setActiveTab("expenses")}>WYDATKI</TabButton>
+              <TabButton active={activeTab === "onboarding"} onClick={() => setActiveTab("onboarding")}>DOKUMENTY ONBOARDING</TabButton>
+              {isAdmin ? <TabButton active={activeTab === "settings"} onClick={() => setActiveTab("settings")}>USTAWIENIA</TabButton> : null}
             </nav>
             <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
               <span className="font-medium text-slate-600">Użytkownik:</span>
-              <select
-                className="bg-transparent font-semibold text-slate-900 outline-none"
-                value={selectedUserId}
-                onChange={(event) => setSelectedUserId(event.target.value)}
-              >
-                {activeUsers.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name}
-                  </option>
-                ))}
+              <select className="bg-transparent font-semibold text-slate-900 outline-none" value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
+                {activeUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
               </select>
             </label>
           </div>
@@ -262,22 +325,10 @@ export function DocHelperApp() {
       <section className="mx-auto max-w-7xl px-4 py-6">
         <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-orange-700">
-              {isAdmin ? "Panel funduszu" : "Panel beneficjenta"}
-            </p>
-            <h2 className="mt-1 text-3xl font-bold text-slate-950">
-              {activeTab === "expenses"
-                ? "Wydatki"
-                : activeTab === "settings"
-                  ? "Ustawienia"
-                  : "Dokumenty onboarding"}
-            </h2>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-orange-700">{isAdmin ? "Panel funduszu" : "Panel beneficjenta"}</p>
+            <h2 className="mt-1 text-3xl font-bold text-slate-950">{activeTab === "expenses" ? "Wydatki" : activeTab === "settings" ? "Ustawienia" : "Dokumenty onboarding"}</h2>
           </div>
-          <button
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-orange-200 bg-white px-4 py-2 text-sm font-semibold text-orange-700 shadow-sm transition hover:bg-orange-50"
-            onClick={refreshData}
-            type="button"
-          >
+          <button className="inline-flex items-center justify-center gap-2 rounded-lg border border-orange-200 bg-white px-4 py-2 text-sm font-semibold text-orange-700 shadow-sm transition hover:bg-orange-50" onClick={refreshData} type="button">
             <RefreshCw size={16} />
             Odśwież dane
           </button>
@@ -291,19 +342,37 @@ export function DocHelperApp() {
         ) : activeTab === "settings" && isAdmin ? (
           <SettingsView beneficiaries={beneficiaries} onAddBeneficiary={handleAddBeneficiary} />
         ) : activeTab === "onboarding" ? (
-          <OnboardingPlaceholder isAdmin={Boolean(isAdmin)} />
+          <OnboardingView
+            beneficiaries={beneficiaries}
+            currentUser={currentUser}
+            documents={visibleOnboardingDocuments}
+            isAdmin={Boolean(isAdmin)}
+            selectedBeneficiaryId={onboardingBeneficiaryFilter}
+            section={onboardingSection}
+            users={users}
+            onBeneficiaryChange={setOnboardingBeneficiaryFilter}
+            onSectionChange={setOnboardingSection}
+            onUpload={handleUploadOnboarding}
+          />
         ) : isAdmin ? (
           <AdminExpensesView
             beneficiaries={beneficiaries}
-            selectedBeneficiaryId={adminBeneficiaryId}
-            selectedBeneficiaryName={selectedAdminBeneficiary?.name}
-            expenses={visibleExpenses}
-            users={users}
             commentDrafts={commentDrafts}
+            dateFrom={adminDateFrom}
+            dateTo={adminDateTo}
+            expenses={visibleExpenses}
+            purposeFilter={adminPurposeFilter}
+            selectedBeneficiaryId={adminBeneficiaryId}
+            statusFilter={adminStatusFilter}
+            users={users}
             onBeneficiaryChange={setAdminBeneficiaryId}
-            onStatus={handleStatus}
             onCommentDraftChange={(expenseId, value) => setCommentDrafts((drafts) => ({ ...drafts, [expenseId]: value }))}
             onCommentSave={handleComment}
+            onDateFromChange={setAdminDateFrom}
+            onDateToChange={setAdminDateTo}
+            onPurposeFilterChange={setAdminPurposeFilter}
+            onStatus={handleStatus}
+            onStatusFilterChange={setAdminStatusFilter}
           />
         ) : (
           <BeneficiaryExpensesView currentUser={currentUser} expenses={visibleExpenses} onAddExpense={handleAddExpense} />
@@ -313,35 +382,15 @@ export function DocHelperApp() {
   );
 }
 
-function TabButton({
-  active,
-  children,
-  onClick
-}: {
-  active: boolean;
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
+function TabButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
-    <button
-      className={`rounded-lg px-3 py-2 text-sm font-bold transition ${
-        active ? "bg-orange-600 text-white shadow-sm" : "text-slate-600 hover:bg-orange-50 hover:text-orange-700"
-      }`}
-      onClick={onClick}
-      type="button"
-    >
+    <button className={`rounded-lg px-3 py-2 text-sm font-bold transition ${active ? "bg-orange-600 text-white shadow-sm" : "text-slate-600 hover:bg-orange-50 hover:text-orange-700"}`} onClick={onClick} type="button">
       {children}
     </button>
   );
 }
 
-function SettingsView({
-  beneficiaries,
-  onAddBeneficiary
-}: {
-  beneficiaries: User[];
-  onAddBeneficiary: (event: FormEvent<HTMLFormElement>) => void;
-}) {
+function SettingsView({ beneficiaries, onAddBeneficiary }: { beneficiaries: User[]; onAddBeneficiary: (event: FormEvent<HTMLFormElement>) => void }) {
   return (
     <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
       <form className="rounded-lg border border-slate-200 bg-white p-5 shadow-soft" onSubmit={onAddBeneficiary}>
@@ -355,17 +404,12 @@ function SettingsView({
           </button>
         </div>
       </form>
-      <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-soft">
-        <h3 className="text-lg font-bold text-slate-950">Lista beneficjentów</h3>
+      <Panel title="Lista beneficjentów">
         <TableShell empty={beneficiaries.length === 0 ? "Brak beneficjentów do wyświetlenia." : ""}>
           {beneficiaries.length > 0 ? (
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-3">Nazwa</th>
-                  <th className="px-4 py-3">Opis</th>
-                  <th className="px-4 py-3">Folder</th>
-                </tr>
+                <tr><th className="px-4 py-3">Nazwa</th><th className="px-4 py-3">Opis</th><th className="px-4 py-3">Folder</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {beneficiaries.map((beneficiary) => (
@@ -379,39 +423,43 @@ function SettingsView({
             </table>
           ) : null}
         </TableShell>
-      </div>
+      </Panel>
     </div>
   );
 }
 
-function BeneficiaryExpensesView({
-  currentUser,
-  expenses,
-  onAddExpense
-}: {
-  currentUser: User | undefined;
-  expenses: Expense[];
-  onAddExpense: (event: FormEvent<HTMLFormElement>) => void;
-}) {
-  if (!currentUser) {
-    return <EmptyState text="Brak wybranego użytkownika." />;
-  }
+function BeneficiaryExpensesView({ currentUser, expenses, onAddExpense }: { currentUser: User | undefined; expenses: Expense[]; onAddExpense: (event: FormEvent<HTMLFormElement>) => void }) {
+  if (!currentUser) return <EmptyState text="Brak wybranego użytkownika." />;
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
+    <div className="grid gap-5 2xl:grid-cols-[460px_1fr]">
       <form className="rounded-lg border border-slate-200 bg-white p-5 shadow-soft" onSubmit={onAddExpense}>
         <h3 className="text-lg font-bold text-slate-950">Dodaj wydatek</h3>
         <div className="mt-4 space-y-4">
+          <Field label="Data wydatku" name="expenseDate" required type="date" />
           <Field label="Nazwa wydatku" name="name" required />
           <Field label="Opis" name="description" textarea />
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Kwota zakupu" name="purchaseAmount" required type="number" step="0.01" min="0.01" />
             <Field label="Kwota do zwrotu" name="refundAmount" required type="number" step="0.01" min="0.01" />
           </div>
+          <Field label="Nazwa kontrahenta" name="contractorName" required />
+          <Field label="NIP kontrahenta" name="contractorNip" required />
           <label className="block">
-            <span className="mb-1 block text-sm font-semibold text-slate-700">Plik dokumentu</span>
-            <input className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" name="file" required type="file" />
+            <span className="mb-1 block text-sm font-semibold text-slate-700">Cel</span>
+            <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4" name="purpose" required defaultValue="">
+              <option value="" disabled>Wybierz cel</option>
+              <option value="PRIORITY">Priorytetowy</option>
+              <option value="DETAILED">Szczegółowy</option>
+            </select>
           </label>
+          <div className="rounded-lg border border-orange-100 bg-orange-50/60 p-4">
+            <h4 className="text-sm font-bold text-slate-900">Załączniki</h4>
+            <div className="mt-3 space-y-3">
+              <FileField label="Faktura" name="invoice" required />
+              <FileField label="Pozostałe dokumenty" name="additional" />
+            </div>
+          </div>
           <button className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-orange-600 px-4 py-3 font-bold text-white transition hover:bg-orange-700" type="submit">
             <Plus size={18} />
             Zapisz wydatek
@@ -426,59 +474,75 @@ function BeneficiaryExpensesView({
 function AdminExpensesView({
   beneficiaries,
   selectedBeneficiaryId,
-  selectedBeneficiaryName,
   expenses,
   users,
   commentDrafts,
+  statusFilter,
+  purposeFilter,
+  dateFrom,
+  dateTo,
   onBeneficiaryChange,
+  onStatusFilterChange,
+  onPurposeFilterChange,
+  onDateFromChange,
+  onDateToChange,
   onStatus,
   onCommentDraftChange,
   onCommentSave
 }: {
   beneficiaries: User[];
   selectedBeneficiaryId: string;
-  selectedBeneficiaryName?: string;
   expenses: Expense[];
   users: User[];
   commentDrafts: Record<string, string>;
+  statusFilter: "all" | ExpenseStatus;
+  purposeFilter: "all" | ExpensePurpose;
+  dateFrom: string;
+  dateTo: string;
   onBeneficiaryChange: (value: string) => void;
+  onStatusFilterChange: (value: "all" | ExpenseStatus) => void;
+  onPurposeFilterChange: (value: "all" | ExpensePurpose) => void;
+  onDateFromChange: (value: string) => void;
+  onDateToChange: (value: string) => void;
   onStatus: (expenseId: string, action: "approve" | "reject") => void;
   onCommentDraftChange: (expenseId: string, value: string) => void;
   onCommentSave: (expenseId: string) => void;
 }) {
+  const title = selectedBeneficiaryId === "all" ? "Wydatki: wszyscy beneficjenci" : `Wydatki: ${beneficiaries.find((beneficiary) => beneficiary.id === selectedBeneficiaryId)?.name ?? "beneficjent"}`;
+
   return (
     <div className="space-y-5">
-      <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-soft">
-        <label className="block max-w-md">
-          <span className="mb-1 block text-sm font-semibold text-slate-700">Wybierz beneficjenta</span>
-          <select
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4"
-            value={selectedBeneficiaryId}
-            onChange={(event) => onBeneficiaryChange(event.target.value)}
-          >
-            <option value="">Wybierz beneficjenta</option>
-            {beneficiaries.map((beneficiary) => (
-              <option key={beneficiary.id} value={beneficiary.id}>
-                {beneficiary.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {!selectedBeneficiaryId ? (
-        <EmptyState text="Wybierz beneficjenta, aby zobaczyć jego wydatki." />
-      ) : (
-        <ExpensesTable
-          adminMode
-          expenses={expenses}
-          users={users}
-          title={`Wydatki: ${selectedBeneficiaryName ?? "beneficjent"}`}
-          commentDrafts={commentDrafts}
-          onStatus={onStatus}
-          onCommentDraftChange={onCommentDraftChange}
-          onCommentSave={onCommentSave}
-        />
-      )}
+      <Panel title="Filtry wydatków">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <SelectField label="Beneficjent" value={selectedBeneficiaryId} onChange={onBeneficiaryChange}>
+            <option value="all">WSZYSCY</option>
+            {beneficiaries.map((beneficiary) => <option key={beneficiary.id} value={beneficiary.id}>{beneficiary.name}</option>)}
+          </SelectField>
+          <SelectField label="Status" value={statusFilter} onChange={(value) => onStatusFilterChange(value as "all" | ExpenseStatus)}>
+            <option value="all">Wszystkie</option>
+            <option value="NOWY">NOWY</option>
+            <option value="ZAAKCEPTOWANO">ZAAKCEPTOWANO</option>
+            <option value="ODRZUCONO">ODRZUCONO</option>
+          </SelectField>
+          <SelectField label="Cel" value={purposeFilter} onChange={(value) => onPurposeFilterChange(value as "all" | ExpensePurpose)}>
+            <option value="all">Wszystkie</option>
+            <option value="PRIORITY">Priorytetowy</option>
+            <option value="DETAILED">Szczegółowy</option>
+          </SelectField>
+          <Field label="Data od" name="dateFromFilter" type="date" value={dateFrom} onValueChange={onDateFromChange} />
+          <Field label="Data do" name="dateToFilter" type="date" value={dateTo} onValueChange={onDateToChange} />
+        </div>
+      </Panel>
+      <ExpensesTable
+        adminMode
+        commentDrafts={commentDrafts}
+        expenses={expenses}
+        title={title}
+        users={users}
+        onCommentDraftChange={onCommentDraftChange}
+        onCommentSave={onCommentSave}
+        onStatus={onStatus}
+      />
     </div>
   );
 }
@@ -505,22 +569,26 @@ function ExpensesTable({
   onCommentSave?: (expenseId: string) => void;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-soft">
-      <h3 className="text-lg font-bold text-slate-950">{title}</h3>
+    <Panel title={title}>
       <TableShell empty={expenses.length === 0 ? "Brak wydatków do wyświetlenia." : ""}>
         {expenses.length > 0 ? (
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr>
+                <th className="px-4 py-3">Data wydatku</th>
                 <th className="px-4 py-3">Data dodania</th>
                 {adminMode ? <th className="px-4 py-3">Beneficjent</th> : null}
                 <th className="px-4 py-3">Nazwa</th>
                 <th className="px-4 py-3">Opis</th>
+                <th className="px-4 py-3">Kontrahent</th>
+                <th className="px-4 py-3">NIP</th>
+                <th className="px-4 py-3">Cel</th>
                 <th className="px-4 py-3">Kwota zakupu</th>
                 <th className="px-4 py-3">Kwota do zwrotu</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Komentarz</th>
-                <th className="px-4 py-3">Plik</th>
+                <th className="px-4 py-3">Faktura</th>
+                <th className="px-4 py-3">Pozostałe dokumenty</th>
                 {adminMode ? <th className="px-4 py-3">Akcje</th> : null}
               </tr>
             </thead>
@@ -529,67 +597,46 @@ function ExpensesTable({
                 const beneficiary = users.find((user) => user.id === expense.beneficiaryId);
                 return (
                   <tr key={expense.id} className="align-top">
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{dateFormatter.format(new Date(expense.createdAt))}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{displayExpenseDate(expense.expenseDate)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{dateTimeFormatter.format(new Date(expense.createdAt))}</td>
                     {adminMode ? <td className="px-4 py-3 font-semibold text-slate-900">{beneficiary?.name ?? "Beneficjent"}</td> : null}
                     <td className="px-4 py-3 font-semibold text-slate-900">{expense.name}</td>
                     <td className="max-w-xs px-4 py-3 text-slate-600">{expense.description || "Brak opisu"}</td>
+                    <td className="px-4 py-3 text-slate-700">{displayValue(expense.contractorName)}</td>
+                    <td className="px-4 py-3 text-slate-700">{displayValue(expense.contractorNip)}</td>
+                    <td className="px-4 py-3 text-slate-700">{purposeLabel(expense.purpose)}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-700">{currencyFormatter.format(expense.purchaseAmount)}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-700">{currencyFormatter.format(expense.refundAmount)}</td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${statusClass(expense.status)}`}>
-                        {expense.status}
-                      </span>
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${statusClass(expense.status)}`}>{expense.status}</span>
                     </td>
                     <td className="min-w-56 px-4 py-3 text-slate-600">
                       {adminMode ? (
                         <div className="flex min-w-64 gap-2">
-                          <input
-                            className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4"
-                            onChange={(event) => onCommentDraftChange?.(expense.id, event.target.value)}
-                            placeholder="Dodaj komentarz"
-                            value={commentDrafts[expense.id] ?? expense.adminComment}
-                          />
-                          <button
-                            className="inline-flex items-center gap-1 rounded-lg border border-orange-200 px-3 py-2 text-xs font-bold text-orange-700 transition hover:bg-orange-50"
-                            onClick={() => onCommentSave?.(expense.id)}
-                            type="button"
-                          >
+                          <input className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4" onChange={(event) => onCommentDraftChange?.(expense.id, event.target.value)} placeholder="Dodaj komentarz" value={commentDrafts[expense.id] ?? expense.adminComment} />
+                          <button className="inline-flex items-center gap-1 rounded-lg border border-orange-200 px-3 py-2 text-xs font-bold text-orange-700 transition hover:bg-orange-50" onClick={() => onCommentSave?.(expense.id)} type="button">
                             <MessageSquare size={14} />
                             Zapisz
                           </button>
                         </div>
-                      ) : (
-                        expense.adminComment || "Brak komentarza"
-                      )}
+                      ) : expense.adminComment || "Brak komentarza"}
                     </td>
                     <td className="px-4 py-3">
-                      <a
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
-                        href={`/api/expenses/${expense.id}/download`}
-                      >
-                        <Download size={14} />
-                        Pobierz
-                      </a>
-                      <div className="mt-1 text-xs text-slate-400">
-                        {expense.originalFileName} · {fileSizeLabel(expense.fileSize)}
-                      </div>
+                      <DownloadCell href={`/api/expenses/${expense.id}/download?type=invoice`} label="Pobierz fakturę" fileName={invoiceName(expense)} fileSize={invoiceSize(expense)} />
+                    </td>
+                    <td className="px-4 py-3">
+                      {expense.additionalOriginalFileName ? (
+                        <DownloadCell href={`/api/expenses/${expense.id}/download?type=additional`} label="Pobierz dokumenty" fileName={expense.additionalOriginalFileName} fileSize={expense.additionalFileSize} />
+                      ) : "Brak"}
                     </td>
                     {adminMode ? (
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-2">
-                          <button
-                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700"
-                            onClick={() => onStatus?.(expense.id, "approve")}
-                            type="button"
-                          >
+                          <button className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700" onClick={() => onStatus?.(expense.id, "approve")} type="button">
                             <Check size={14} />
                             Zatwierdź
                           </button>
-                          <button
-                            className="inline-flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-red-700"
-                            onClick={() => onStatus?.(expense.id, "reject")}
-                            type="button"
-                          >
+                          <button className="inline-flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-red-700" onClick={() => onStatus?.(expense.id, "reject")} type="button">
                             <X size={14} />
                             Odrzuć
                           </button>
@@ -604,23 +651,173 @@ function ExpensesTable({
         ) : null}
       </TableShell>
       {beneficiaryMode ? <p className="mt-3 text-xs text-slate-500">Komentarz ADMINA jest widoczny od razu po zapisaniu przez fundusz.</p> : null}
+    </Panel>
+  );
+}
+
+function OnboardingView({
+  beneficiaries,
+  currentUser,
+  documents,
+  isAdmin,
+  selectedBeneficiaryId,
+  section,
+  users,
+  onBeneficiaryChange,
+  onSectionChange,
+  onUpload
+}: {
+  beneficiaries: User[];
+  currentUser: User | undefined;
+  documents: OnboardingDocument[];
+  isAdmin: boolean;
+  selectedBeneficiaryId: string;
+  section: OnboardingSection;
+  users: User[];
+  onBeneficiaryChange: (value: string) => void;
+  onSectionChange: (value: OnboardingSection) => void;
+  onUpload: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const sections: { id: OnboardingSection; label: string }[] = [
+    { id: "welcome", label: "Witamy" },
+    { id: "marketing", label: "Paczka marketingowa" },
+    { id: "contact", label: "Kontakt" },
+    { id: "documents", label: "Dokumenty do wypełnienia" }
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap gap-2">
+        {sections.map((item) => <TabButton key={item.id} active={section === item.id} onClick={() => onSectionChange(item.id)}>{item.label}</TabButton>)}
+      </div>
+
+      {section === "welcome" ? (
+        <OnboardingText title="Witamy w programie akceleracyjnym.">
+          <p>W tej sekcji znajdziesz najważniejsze informacje potrzebne na początku współpracy z funduszem. DocHelper pomoże Ci uporządkować dokumenty, materiały oraz podstawową komunikację związaną z udziałem w programie.</p>
+          <p>Na tym etapie aplikacja służy przede wszystkim do przekazywania dokumentów, pobierania materiałów oraz kontroli statusu wybranych spraw.</p>
+        </OnboardingText>
+      ) : null}
+
+      {section === "marketing" ? (
+        <OnboardingText title="Paczka marketingowa">
+          <p>Paczka marketingowa zawiera podstawowe materiały, które mogą być potrzebne do komunikacji udziału w programie akceleracyjnym.</p>
+          <p>W kolejnych wersjach aplikacji w tej sekcji będzie można pobierać materiały takie jak logotypy, grafiki, szablony prezentacji, informacje o zasadach oznaczania funduszu oraz inne pliki pomocne w działaniach komunikacyjnych.</p>
+          <p>Na potrzeby obecnego MVP sekcja ma charakter informacyjny.</p>
+        </OnboardingText>
+      ) : null}
+
+      {section === "contact" ? (
+        <OnboardingText title="Kontakt z funduszem">
+          <p>W przypadku pytań dotyczących dokumentów, rozliczenia wydatków albo udziału w programie, skontaktuj się z opiekunem programu po stronie funduszu.</p>
+          <p>Przed wysłaniem wiadomości sprawdź, czy wymagany dokument został już dodany w odpowiedniej sekcji aplikacji oraz czy jego status nie został wcześniej zaktualizowany przez ADMINA.</p>
+          <p>W sprawach organizacyjnych przygotuj krótki opis problemu oraz nazwę beneficjenta, którego dotyczy zgłoszenie. Ułatwi to szybszą weryfikację i odpowiedź ze strony funduszu.</p>
+          <p>Dane kontaktowe funduszu zostaną uzupełnione w kolejnej wersji aplikacji.</p>
+          <div className="rounded-lg border border-orange-100 bg-orange-50 p-4 text-sm font-semibold text-slate-800">
+            <p>E-mail: kontakt@fundusz.pl</p>
+            <p>Telefon: +48 000 000 000</p>
+          </div>
+        </OnboardingText>
+      ) : null}
+
+      {section === "documents" ? (
+        <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
+          <Panel title="Formularz onboardingowy">
+            <a className="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-orange-700" href="/api/onboarding/placeholder">
+              <Download size={16} />
+              Pobierz placeholder PDF
+            </a>
+            {!isAdmin && currentUser?.role === "BENEFICIARY" ? (
+              <form className="mt-5 space-y-4" onSubmit={onUpload}>
+                <Field label="Nazwa dokumentu" name="name" required />
+                <FileField label="Plik" name="file" required />
+                <button className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-orange-600 px-4 py-3 font-bold text-white transition hover:bg-orange-700" type="submit">
+                  <Send size={17} />
+                  Wyślij dokument
+                </button>
+              </form>
+            ) : null}
+            {isAdmin ? (
+              <div className="mt-5">
+                <SelectField label="Filtr beneficjenta" value={selectedBeneficiaryId} onChange={onBeneficiaryChange}>
+                  <option value="all">WSZYSCY</option>
+                  {beneficiaries.map((beneficiary) => <option key={beneficiary.id} value={beneficiary.id}>{beneficiary.name}</option>)}
+                </SelectField>
+              </div>
+            ) : null}
+          </Panel>
+          <OnboardingDocumentsTable documents={documents} isAdmin={isAdmin} users={users} />
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function OnboardingPlaceholder({ isAdmin }: { isAdmin: boolean }) {
+function OnboardingDocumentsTable({ documents, isAdmin, users }: { documents: OnboardingDocument[]; isAdmin: boolean; users: User[] }) {
   return (
-    <div className="rounded-lg border border-orange-100 bg-white p-8 shadow-soft">
-      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-orange-100 text-orange-700">
-        <FileText size={24} />
-      </div>
-      <h3 className="text-xl font-bold text-slate-950">Dokumenty onboardingowe</h3>
-      <p className="mt-2 max-w-2xl text-slate-600">
-        {isAdmin
-          ? "W tej sekcji w kolejnej wersji będzie można dodawać dokumenty onboardingowe dla beneficjentów."
-          : "W tej sekcji w kolejnej wersji będą widoczne dokumenty onboardingowe przekazane przez fundusz."}
-      </p>
+    <Panel title={isAdmin ? "Dokumenty wysłane przez beneficjentów" : "Moje wysłane dokumenty"}>
+      <TableShell empty={documents.length === 0 ? "Brak dokumentów do wyświetlenia." : ""}>
+        {documents.length > 0 ? (
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Data dodania</th>
+                {isAdmin ? <th className="px-4 py-3">Beneficjent</th> : null}
+                <th className="px-4 py-3">Nazwa dokumentu</th>
+                <th className="px-4 py-3">Nazwa pliku</th>
+                <th className="px-4 py-3">Akcje</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {documents.map((document) => {
+                const beneficiary = users.find((user) => user.id === document.beneficiaryId);
+                return (
+                  <tr key={document.id}>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{dateTimeFormatter.format(new Date(document.createdAt))}</td>
+                    {isAdmin ? <td className="px-4 py-3 font-semibold text-slate-900">{beneficiary?.name ?? "Beneficjent"}</td> : null}
+                    <td className="px-4 py-3 font-semibold text-slate-900">{document.name}</td>
+                    <td className="px-4 py-3 text-slate-600">{document.originalFileName} · {fileSizeLabel(document.fileSize)}</td>
+                    <td className="px-4 py-3"><DownloadCell href={`/api/onboarding/${document.id}/download`} label="Pobierz" fileName={document.originalFileName} fileSize={document.fileSize} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : null}
+      </TableShell>
+    </Panel>
+  );
+}
+
+function OnboardingText({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Panel title={title}>
+      <div className="max-w-3xl space-y-4 text-slate-600">{children}</div>
+    </Panel>
+  );
+}
+
+function DownloadCell({ href, label, fileName, fileSize }: { href: string; label: string; fileName?: string; fileSize?: number }) {
+  if (!fileName) return <span className="text-slate-500">Brak danych</span>;
+
+  return (
+    <div>
+      <a className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50" href={href}>
+        <Download size={14} />
+        {label}
+      </a>
+      <div className="mt-1 max-w-48 text-xs text-slate-400">{fileName}{fileSize ? ` · ${fileSizeLabel(fileSize)}` : ""}</div>
     </div>
+  );
+}
+
+function SelectField({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
+      <select className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4" value={value} onChange={(event) => onChange(event.target.value)}>
+        {children}
+      </select>
+    </label>
   );
 }
 
@@ -631,7 +828,9 @@ function Field({
   textarea,
   type = "text",
   step,
-  min
+  min,
+  value,
+  onValueChange
 }: {
   label: string;
   name: string;
@@ -640,36 +839,42 @@ function Field({
   type?: string;
   step?: string;
   min?: string;
+  value?: string;
+  onValueChange?: (value: string) => void;
 }) {
+  const commonClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4";
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
       {textarea ? (
-        <textarea
-          className="min-h-24 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4"
-          name={name}
-          required={required}
-        />
+        <textarea className={`min-h-24 ${commonClass}`} name={name} required={required} />
       ) : (
-        <input
-          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-orange-200 transition focus:ring-4"
-          min={min}
-          name={name}
-          required={required}
-          step={step}
-          type={type}
-        />
+        <input className={commonClass} min={min} name={name} onChange={onValueChange ? (event) => onValueChange(event.target.value) : undefined} required={required} step={step} type={type} value={value} />
       )}
     </label>
   );
 }
 
-function TableShell({ children, empty }: { children: React.ReactNode; empty: string }) {
+function FileField({ label, name, required }: { label: string; name: string; required?: boolean }) {
   return (
-    <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
-      {empty ? <div className="bg-slate-50 p-6 text-sm text-slate-500">{empty}</div> : children}
+    <label className="block">
+      <span className="mb-1 block text-sm font-semibold text-slate-700">{label}</span>
+      <input className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" name={name} required={required} type="file" />
+    </label>
+  );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-soft">
+      <h3 className="text-lg font-bold text-slate-950">{title}</h3>
+      <div className="mt-4">{children}</div>
     </div>
   );
+}
+
+function TableShell({ children, empty }: { children: React.ReactNode; empty: string }) {
+  return <div className="overflow-x-auto rounded-lg border border-slate-200">{empty ? <div className="bg-slate-50 p-6 text-sm text-slate-500">{empty}</div> : children}</div>;
 }
 
 function EmptyState({ text }: { text: string }) {
