@@ -5,9 +5,8 @@ import type { Expense, ExpenseStatus, User } from "@/lib/types";
 
 export const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
-const rootDir = process.cwd();
-const dataDir = path.join(rootDir, "data");
-const storageDir = path.join(rootDir, "storage", "documents");
+const dataDir = path.join(/* turbopackIgnore: true */ process.cwd(), "data");
+const storageDir = path.join(/* turbopackIgnore: true */ process.cwd(), "storage", "documents");
 const usersPath = path.join(dataDir, "users.json");
 const expensesPath = path.join(dataDir, "expenses.json");
 
@@ -84,6 +83,7 @@ export function slugifyFolderName(name: string) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+    .replace(/[.'"]/g, "")
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 80) || `beneficjent_${randomUUID().slice(0, 8)}`;
@@ -142,6 +142,7 @@ export function safeStoredFileName(kind: "expense", originalFileName: string) {
     .basename(originalFileName, extension)
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.'"]/g, "")
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 60) || "plik";
@@ -157,7 +158,7 @@ export async function storeExpenseFile(beneficiary: User, file: File) {
   await ensureBeneficiaryFolders(beneficiary.folderName);
   const storedFileName = safeStoredFileName("expense", file.name);
   const relativePath = path.join("storage", "documents", beneficiary.folderName, "wydatki", storedFileName);
-  const absolutePath = path.join(rootDir, relativePath);
+  const absolutePath = path.join(storageDir, beneficiary.folderName, "wydatki", storedFileName);
   const buffer = Buffer.from(await file.arrayBuffer());
   await fs.writeFile(absolutePath, buffer);
 
@@ -171,7 +172,7 @@ export async function storeExpenseFile(beneficiary: User, file: File) {
 }
 
 export async function readStoredFile(relativePath: string) {
-  const absolutePath = path.join(rootDir, relativePath);
+  const absolutePath = path.join(/* turbopackIgnore: true */ process.cwd(), relativePath);
   const resolved = path.resolve(absolutePath);
   const allowedRoot = path.resolve(storageDir);
 

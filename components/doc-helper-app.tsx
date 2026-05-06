@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Download, FileText, MessageSquare, Plus, RefreshCw, X } from "lucide-react";
 import type { ApiError, Expense, User } from "@/lib/types";
 
@@ -65,17 +65,7 @@ export function DocHelperApp() {
     return currentUser ? expenses.filter((expense) => expense.beneficiaryId === currentUser.id) : [];
   }, [adminBeneficiaryId, currentUser, expenses, isAdmin]);
 
-  useEffect(() => {
-    void refreshData();
-  }, []);
-
-  useEffect(() => {
-    if (!isAdmin && activeTab === "settings") {
-      setActiveTab("expenses");
-    }
-  }, [activeTab, isAdmin]);
-
-  async function refreshData() {
+  const refreshData = useCallback(async () => {
     setIsLoading(true);
     setError("");
     try {
@@ -86,18 +76,28 @@ export function DocHelperApp() {
       ]);
       setUsers(nextUsers);
       setExpenses(nextExpenses);
-      if (!nextUsers.some((user) => user.id === selectedUserId && (user.role === "ADMIN" || user.isActive))) {
-        setSelectedUserId("admin");
-      }
-      if (!adminBeneficiaryId && nextUsers.some((user) => user.role === "BENEFICIARY")) {
-        setAdminBeneficiaryId(nextUsers.find((user) => user.role === "BENEFICIARY")?.id ?? "");
-      }
+      setSelectedUserId((previousUserId) =>
+        nextUsers.some((user) => user.id === previousUserId && (user.role === "ADMIN" || user.isActive)) ? previousUserId : "admin"
+      );
+      setAdminBeneficiaryId((previousBeneficiaryId) =>
+        previousBeneficiaryId || nextUsers.find((user) => user.role === "BENEFICIARY")?.id || ""
+      );
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Nie udało się odświeżyć danych.");
     } finally {
       setIsLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    void refreshData();
+  }, [refreshData]);
+
+  useEffect(() => {
+    if (!isAdmin && activeTab === "settings") {
+      setActiveTab("expenses");
+    }
+  }, [activeTab, isAdmin]);
 
   function showNotice(message: string) {
     setNotice(message);
